@@ -35,6 +35,12 @@ Community-contributed emote sets. [Submit yours via PR!](#custom-emotes)
 pi install git:github.com/cgxeiji/pi-emote
 ```
 
+**Load pi-emote before the extensions whose lines you want in the panel.** Pi loads
+the packages in the order they appear in `settings.json`, and an extension that
+reads `ui.setWidget` into a local variable when it mounts (pi-lens does) keeps
+pointing at the un-wrapped function if it mounts first. Nothing breaks when the
+order is wrong: the panel just shows fewer lines.
+
 ## States
 
 | State | Trigger |
@@ -69,6 +75,34 @@ Only include what you want to change:
 ```
 
 See `config.json` in the extension root for all defaults.
+
+### Widget panel
+
+The widget is drawn next to the avatar. Three keys control it:
+
+```json
+{
+  "showTokenStats": true,
+  "board": false,
+  "captureOrder": []
+}
+```
+
+- **`showTokenStats`** (default `true`) — the `↑ ↓ ⇞ $` line under the avatar.
+- **`board`** (default `false`) — draw, inside the panel, the lines the other
+extensions drew below the editor, and stop the TUI from duplicating them. Off by
+default, because moving other extensions' lines around changes what you see and has
+to be asked for.
+- **`captureOrder`** (default `[]`) — widget ids to draw first, in this order. Ids
+not listed follow in the order they first declared themselves, so the default needs
+no knowledge of which extensions are installed. List ids here only if you want the
+order to stay the same across restarts.
+
+The capture works by wrapping `setWidget` and `setStatus` on the `ui` object Pi hands
+to every extension, so no extension has to know about pi-emote. The panel renders
+widget *factories* itself, against the real TUI, and skips a factory that throws
+while rendering — the worst case is a line missing from the panel, never a broken
+TUI. Nothing is hidden until the panel is up.
 
 ### ASCII canvas
 

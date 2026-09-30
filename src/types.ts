@@ -52,6 +52,15 @@ export interface Config {
   emotes: EmoteMapping[];
   terminals: TerminalMapping[];
   theme: WidgetTheme;
+  /** Draw the token/cost line (↑ ↓ ⇞ $) in the widget. Upstream behavior: true. */
+  showTokenStats: boolean;
+  /** Draw the lines the other extensions drew, intercepted from the shared ui object (see interceptor.ts). */
+  board: boolean;
+  /**
+   * Widget ids to draw first, in this order. Ids not listed follow in first-seen
+   * order; an empty list (the default) means first-seen order for everything.
+   */
+  captureOrder: string[];
 }
 
 export interface EmoteMapping {

@@ -4,6 +4,7 @@ import type { Animator } from "./animator.js";
 import type { RenderedFrame } from "./renderer.js";
 import { log } from "./log.js";
 import { resolveProgressColor } from "./theme.js";
+import { capturedFactories, capturedLines } from "./interceptor.js";
 
 // --- Token formatting ---
 
@@ -61,9 +62,8 @@ function colorStyler(color: WidgetColor, thinking: (s: string) => string, theme:
   return (s: string) => theme.fg(color, s);
 }
 
-function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any, theme: any, config: any): string[] {
-  const lines: string[] = [];
-  if (!ctxRef) return lines;
+function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any, theme: any, config: any, tui: any): string[] {
+  if (!ctxRef) return [];
 
   // Line 1: Model + thinking level + context window
   const model = ctxRef.model;
@@ -78,8 +78,6 @@ function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any
     const window = formatTokens(usage.contextWindow);
     modelStr += ` • ${window}`;
   }
-  lines.push(modelStr);
-
   // Line 2: Progress bar
   // Calculate cumulative totals and extract latest message stats
   let totalInput = 0;
@@ -110,7 +108,6 @@ function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any
   } catch (_) { /* ignore if not available */ }
 
   const progressBar = buildProgressBar(usage, latestCacheRead, latestInput, latestCacheWrite);
-  lines.push(progressBar);
 
   // Line 3: Stats with cache hit rate
   // Calculate cache hit rate using pi's formula
@@ -118,7 +115,6 @@ function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any
   const cacheHitRate = latestPromptTokens > 0 ? (latestCacheRead / latestPromptTokens) * 100 : 0;
   
   const statsStr = `↑${formatTokens(totalInput)} ↓${formatTokens(totalOutput)} ⇞${cacheHitRate.toFixed(1)}% $${totalCost.toFixed(3)}`;
-  lines.push(statsStr);
 
   // Line 4: Current working directory
   let pwd = ctxRef.sessionManager.getCwd?.() ?? process.cwd();
@@ -126,8 +122,6 @@ function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any
   if (home && pwd.startsWith(home)) {
     pwd = `~${pwd.slice(home.length)}`;
   }
-  lines.push(pwd);
-
   const infoWidth = width - avatarWidth - 5;
 
   const thinkingStyler = theme.getThinkingBorderColor?.(thinkingLevel)
@@ -137,11 +131,48 @@ function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any
   const styleProgress = colorStyler(resolveProgressColor(usage?.percent ?? 0, cacheHitRate, wt["progress-bar"] ?? {}), thinkingStyler, theme);
   const styleStats = colorStyler(wt["token-info"] ?? "dim", thinkingStyler, theme);
   const stylePwd = colorStyler(wt["working-directory"] ?? "warning", thinkingStyler, theme);
-  const styleFns = [styleModel, styleProgress, styleStats, stylePwd];
 
-  return lines.map((l, i) => {
-    if (visibleWidth(l) > infoWidth) l = truncateToWidth(l, infoWidth, "…");
-    return styleFns[i](l);
+  // Every entry carries its own style, so adding or dropping a line can never
+  // shift the style of the lines below it. A parallel array of styles would.
+  const entries: { text: string; style: (s: string) => string }[] = [
+    { text: modelStr, style: styleModel },
+    { text: progressBar, style: styleProgress },
+  ];
+  // Optional line: the same totals are already on screen below the editor, so
+  // `showTokenStats: false` drops the duplicate. The default stays `true` to
+  // keep the upstream layout.
+  if (config.showTokenStats) entries.push({ text: statsStr, style: styleStats });
+  entries.push({ text: pwd, style: stylePwd });
+
+  // Lines drawn by the other extensions, intercepted from the shared ui object
+  // (see interceptor.ts). They arrive already styled by their source, so the panel
+  // does not re-style them: a second pass would fight the inner escape codes.
+  if (config.board) {
+    for (const boardLine of capturedLines()) {
+      entries.push({ text: boardLine, style: (s: string) => s });
+    }
+    // A widget the source declared as a factory is rendered here, with the same
+    // `tui` pi would have handed it. A factory that throws is skipped: the panel
+    // loses one line, the TUI keeps working.
+    for (const { id, factory } of capturedFactories()) {
+      try {
+        const component = factory(tui, theme);
+        const rendered = component?.render?.(infoWidth);
+        if (Array.isArray(rendered)) {
+          for (const line of rendered) {
+            const text = String(line).trimEnd();
+            if (text) entries.push({ text, style: (s: string) => s });
+          }
+        }
+      } catch (err) {
+        log(`factory ${id} threw while rendering: ${String(err)}`);
+      }
+    }
+  }
+
+  return entries.map(({ text, style }) => {
+    const fitted = visibleWidth(text) > infoWidth ? truncateToWidth(text, infoWidth, "…") : text;
+    return style(fitted);
   });
 }
 
@@ -261,8 +292,8 @@ export interface WidgetDeps {
 }
 
 export function createWidgetFactory(deps: WidgetDeps) {
-  return (_tui: any, theme: any) => {
-    deps.animator.setTui(_tui);
+  return (tui: any, theme: any) => {
+    deps.animator.setTui(tui);
     return {
       render(width: number): string[] {
         const { animator, config } = deps;
@@ -284,7 +315,7 @@ export function createWidgetFactory(deps: WidgetDeps) {
         const separatorColor = colorStyler(config.theme["vertical-separator"] ?? "thinking-level-color", thinkingStyler, theme);
         const border = borderColor("─".repeat(width));
         const avatarWidth = frame.kind === "text" ? config.asciiCanvas.cols : config.size;
-        const infoLines = buildInfoLines(width, avatarWidth, deps.getCtxRef(), deps.pi, theme, config);
+        const infoLines = buildInfoLines(width, avatarWidth, deps.getCtxRef(), deps.pi, theme, config, tui);
 
         const lines: string[] = [];
         lines.push(border);

@@ -17,6 +17,7 @@ import { AsciiRenderer } from "./render_ascii.js";
 import { Animator } from "./animator.js";
 import { createWidgetFactory } from "./widget.js";
 import { resolveRenderer } from "./terminal.js";
+import { installInterceptor, setCaptureOrder, setSuppressing } from "./interceptor.js";
 
 const IMAGE_STATES = ["hi", "idle", "think", "talk", "read", "write", "tool", "success", "failure", "compact"];
 
@@ -152,6 +153,14 @@ export default function (pi: ExtensionAPI) {
     }
 
     ctxRef = ctx;
+    // Capture what the other extensions draw, so the panel can show it and the TUI
+    // can stop duplicating it. Installed on every session start: pi recreates the ui
+    // object, and the interceptor re-attaches by identity.
+    installInterceptor(ctx.ui);
+    // The draw order is configuration, not code: with no list the captured sources
+    // follow the order they first declared themselves.
+    setCaptureOrder(config.captureOrder);
+    setSuppressing(false);
 
     if (!config.enabled) return;
 
@@ -172,6 +181,9 @@ export default function (pi: ExtensionAPI) {
     }), { placement: "aboveEditor" });
 
     widgetActive = true;
+    // The panel is up: the captured lines have somewhere to go, so they can leave
+    // the TUI. This is the only switch that hides anything.
+    setSuppressing(true);
     setTimeout(() => animator.transitionTo("hi"), 500);
   });
 
@@ -182,6 +194,8 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setWidget("emote", undefined);
       widgetActive = false;
     }
+    // No panel, no home for the captured lines: put them back where they were.
+    setSuppressing(false);
     animator.setTui(null);
     ctxRef = null;
   });

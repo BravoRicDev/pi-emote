@@ -58,6 +58,12 @@ const DEFAULTS: Config = {
     { match: "warpterminal", render: "kitty" },
   ],
   theme: { ...DEFAULT_WIDGET_THEME },
+  showTokenStats: true,
+  // Off by default: moving other extensions' lines into the panel changes what a
+  // user sees, so it has to be asked for.
+  board: false,
+  // Empty by default: first-seen order, which needs no knowledge of who is installed.
+  captureOrder: [],
 };
 
 /**
