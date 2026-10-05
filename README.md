@@ -124,6 +124,27 @@ Each dimension falls back to its default on its own, so a typo in one of them do
 not discard the other. This only affects the `ascii` renderer: image and
 placeholder renderers take their width from `size`.
 
+### Responsive compact mode (mobile & small terminals)
+
+On small screens (such as viewing tmux from a phone or split pane), the full avatar can consume too much vertical space. pi-emote automatically switches to a compact 1–2 line bar when the terminal is constrained:
+
+```json
+{
+  "compactMode": "auto",
+  "compactBelowRows": 35,
+  "compactBelowCols": 80,
+  "hideBelowRows": 15
+}
+```
+
+- **`compactMode`** (default `"auto"`) — `"auto"` activates when terminal rows < `compactBelowRows` OR width < `compactBelowCols`. Can be set to `"always"` to keep the compact bar permanently, or `"never"` to always use the full canvas.
+- **`compactBelowRows`** (default `35`) — terminal height threshold (rows) to switch to compact layout.
+- **`compactBelowCols`** (default `80`) — terminal width threshold (cols) to switch to compact layout.
+- **`hideBelowRows`** (default `15`) — terminal height threshold below which the widget is hidden completely.
+- **`hideBelow`** (default `40`) — terminal width threshold below which the widget is hidden completely.
+
+In compact mode, the multi-row avatar is replaced with a single-line reactive mini-emoticon matching the agent's current state (e.g. `(^ ◡ ^)/` on startup, `(•_ • )?` while thinking, `(• o •)` when talking, `( • ω•)/` while running tools, `(^ ◡ ^)★` on success, `( ° Д°)#` on failure).
+
 ### Theme
 
 Customize the widget colors. All fields are optional — omitted fields use the defaults below:

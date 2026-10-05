@@ -45,6 +45,14 @@ export interface Config {
   asciiCanvas: AsciiCanvas;
   readingSpeed: number;
   hideBelow: number;
+  /** Terminal rows threshold below which the widget is completely hidden (default: 15). */
+  hideBelowRows?: number;
+  /** Responsive compact mode: "auto" adapts based on terminal size, "always" forces compact, "never" disables. */
+  compactMode?: "auto" | "always" | "never";
+  /** Terminal rows threshold below which compact mode activates (default: 35). */
+  compactBelowRows?: number;
+  /** Terminal columns threshold below which compact mode activates (default: 80). */
+  compactBelowCols?: number;
   holdDuration: { hi: number; success: number; failure: number };
   blinkInterval: [number, number];
   talkTickMs: number;

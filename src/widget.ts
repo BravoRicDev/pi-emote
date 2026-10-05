@@ -1,10 +1,10 @@
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
-import type { Config, WidgetColor } from "./types.js";
+import type { Config, WidgetColor, EmoteState } from "./types.js";
 import type { Animator } from "./animator.js";
 import type { RenderedFrame } from "./renderer.js";
-import { log } from "./log.js";
-import { resolveProgressColor } from "./theme.js";
-import { capturedFactories, capturedLines } from "./interceptor.js";
+import { log } from "./log.ts";
+import { resolveProgressColor } from "./theme.ts";
+import { capturedFactories, capturedLines } from "./interceptor.ts";
 
 // --- Token formatting ---
 
@@ -17,8 +17,7 @@ function formatTokens(count: number): string {
 
 // --- Progress bar ---
 
-function buildProgressBar(usage: any, latestCacheRead: number, latestInput: number, latestCacheWrite: number): string {
-  const segments = 20;
+function buildProgressBar(usage: any, latestCacheRead: number, latestInput: number, latestCacheWrite: number, segments = 20): string {
   const subsPerSegment = 8;
   const totalSubs = segments * subsPerSegment;
   const percent = usage?.percent ?? 0;
@@ -54,12 +53,51 @@ function buildProgressBar(usage: any, latestCacheRead: number, latestInput: numb
 
 // --- Info panel ---
 
-// --- Info panel ---
-
 /** Resolve a widget color to a text styler. "thinking-level-color" follows the current thinking level. */
 function colorStyler(color: WidgetColor, thinking: (s: string) => string, theme: any): (s: string) => string {
   if (color === "thinking-level-color") return thinking;
   return (s: string) => theme.fg(color, s);
+}
+
+function extractSessionUsage(ctxRef: any) {
+  let totalInput = 0;
+  let totalOutput = 0;
+  let totalCost = 0;
+  let latestInput = 0;
+  let latestCacheRead = 0;
+  let latestCacheWrite = 0;
+
+  try {
+    const entries = ctxRef?.sessionManager?.getEntries?.() ?? [];
+    for (const entry of entries) {
+      if (entry.type === "message" && entry.message?.role === "assistant") {
+        const msgInput = entry.message.usage?.input ?? 0;
+        const msgCacheRead = entry.message.usage?.cacheRead ?? 0;
+        const msgCacheWrite = entry.message.usage?.cacheWrite ?? 0;
+
+        totalInput += msgInput;
+        totalOutput += entry.message.usage?.output ?? 0;
+        totalCost += entry.message.usage?.cost?.total ?? 0;
+
+        latestInput = msgInput;
+        latestCacheRead = msgCacheRead;
+        latestCacheWrite = msgCacheWrite;
+      }
+    }
+  } catch (_) { /* ignore if not available */ }
+
+  const latestPromptTokens = latestInput + latestCacheRead + latestCacheWrite;
+  const cacheHitRate = latestPromptTokens > 0 ? (latestCacheRead / latestPromptTokens) * 100 : 0;
+
+  return {
+    totalInput,
+    totalOutput,
+    totalCost,
+    latestInput,
+    latestCacheRead,
+    latestCacheWrite,
+    cacheHitRate,
+  };
 }
 
 function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any, theme: any, config: any, tui: any): string[] {
@@ -78,43 +116,12 @@ function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any
     const window = formatTokens(usage.contextWindow);
     modelStr += ` • ${window}`;
   }
-  // Line 2: Progress bar
-  // Calculate cumulative totals and extract latest message stats
-  let totalInput = 0;
-  let totalOutput = 0;
-  let totalCost = 0;
-  let latestInput = 0;
-  let latestCacheRead = 0;
-  let latestCacheWrite = 0;
-  
-  try {
-    const entries = ctxRef.sessionManager.getEntries();
-    for (const entry of entries) {
-      if (entry.type === "message" && entry.message.role === "assistant") {
-        const msgInput = entry.message.usage?.input ?? 0;
-        const msgCacheRead = entry.message.usage?.cacheRead ?? 0;
-        const msgCacheWrite = entry.message.usage?.cacheWrite ?? 0;
-        
-        totalInput += msgInput;
-        totalOutput += entry.message.usage?.output ?? 0;
-        totalCost += entry.message.usage?.cost?.total ?? 0;
-        
-        // Keep track of the latest message's stats
-        latestInput = msgInput;
-        latestCacheRead = msgCacheRead;
-        latestCacheWrite = msgCacheWrite;
-      }
-    }
-  } catch (_) { /* ignore if not available */ }
-
-  const progressBar = buildProgressBar(usage, latestCacheRead, latestInput, latestCacheWrite);
+  // Line 2: Progress bar & session stats
+  const stats = extractSessionUsage(ctxRef);
+  const progressBar = buildProgressBar(usage, stats.latestCacheRead, stats.latestInput, stats.latestCacheWrite);
 
   // Line 3: Stats with cache hit rate
-  // Calculate cache hit rate using pi's formula
-  const latestPromptTokens = latestInput + latestCacheRead + latestCacheWrite;
-  const cacheHitRate = latestPromptTokens > 0 ? (latestCacheRead / latestPromptTokens) * 100 : 0;
-  
-  const statsStr = `↑${formatTokens(totalInput)} ↓${formatTokens(totalOutput)} ⇞${cacheHitRate.toFixed(1)}% $${totalCost.toFixed(3)}`;
+  const statsStr = `↑${formatTokens(stats.totalInput)} ↓${formatTokens(stats.totalOutput)} ⇞${stats.cacheHitRate.toFixed(1)}% $${stats.totalCost.toFixed(3)}`;
 
   // Line 4: Current working directory
   let pwd = ctxRef.sessionManager.getCwd?.() ?? process.cwd();
@@ -281,6 +288,117 @@ function renderPlaceholderFrame(frame: RenderedFrame & { kind: "placeholder" }, 
   return lines;
 }
 
+// --- Compact responsive layout ---
+
+export const MINI_EMOTES: Record<EmoteState, string> = {
+  hi: "(^ ◡ ^)/",
+  idle: "(• ◡ •)",
+  think: "(•_ • )?",
+  talk: "(• o •)",
+  read: "( ╭ರᴥ•́)",
+  write: "( ｡ ｡)φ",
+  tool: "( • ω•)/",
+  success: "(^ ◡ ^)★",
+  failure: "( ° Д°)#",
+  compact: "( - ◡ -)",
+};
+
+export function shouldRenderCompact(width: number, terminalRows: number, config: Config): boolean {
+  if (config.compactMode === "never") return false;
+  if (config.compactMode === "always") return true;
+
+  const compactBelowRows = config.compactBelowRows ?? 35;
+  const compactBelowCols = config.compactBelowCols ?? 80;
+
+  return terminalRows < compactBelowRows || width < compactBelowCols;
+}
+
+export function renderCompactFrame(
+  width: number,
+  terminalRows: number,
+  animator: Animator,
+  config: Config,
+  ctxRef: any,
+  pi: any,
+  theme: any,
+  border: string,
+  thinkingStyler: (s: string) => string,
+): string[] {
+  const lines: string[] = [border];
+  const wt = config.theme;
+  const thinkingLevel = pi?.getThinkingLevel?.() ?? "high";
+
+  // 1. Mini Emote
+  const miniEmote = MINI_EMOTES[animator.currentState] ?? "(• ◡ •)";
+  const emoteColor = colorStyler(wt["model-name"] ?? "accent", thinkingStyler, theme);
+  const styledEmote = theme.bold(emoteColor(miniEmote));
+
+  // 2. Model & Context Window
+  const model = ctxRef?.model;
+  let modelStr = model?.name ?? "pi";
+  if (model?.reasoning) {
+    modelStr += ` • ${thinkingLevel}`;
+  }
+  const usage = ctxRef?.getContextUsage?.();
+  if (usage) {
+    modelStr += ` • ${formatTokens(usage.contextWindow)}`;
+  }
+  const styleModel = (s: string) => theme.bold(colorStyler(wt["model-name"] ?? "accent", thinkingStyler, theme)(s));
+
+  // 3. Stats & Progress Bar
+  const stats = extractSessionUsage(ctxRef);
+  const segments = width < 65 ? 8 : (width < 85 ? 12 : 16);
+  const progressBar = buildProgressBar(usage, stats.latestCacheRead, stats.latestInput, stats.latestCacheWrite, segments);
+  const styleProgress = colorStyler(resolveProgressColor(usage?.percent ?? 0, stats.cacheHitRate, wt["progress-bar"] ?? {}), thinkingStyler, theme);
+
+  // 4. Working directory
+  let pwd = ctxRef?.sessionManager?.getCwd?.() ?? process.cwd();
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (home && pwd.startsWith(home)) {
+    pwd = `~${pwd.slice(home.length)}`;
+  }
+  const stylePwd = colorStyler(wt["working-directory"] ?? "warning", thinkingStyler, theme);
+
+  // Ultra-compact single line (border + 1 line) when terminal is very short (< 24 rows)
+  if (terminalRows < 24) {
+    const rawHead = `${miniEmote} ${modelStr} ${progressBar}`;
+    const headWidth = visibleWidth(rawHead);
+    const availForPwd = width - headWidth - 3;
+    const shortPwd = availForPwd > 8 ? truncateToWidth(pwd, availForPwd, "…") : "";
+    const mainLine = ` ${styledEmote} ${styleModel(modelStr)} ${styleProgress(progressBar)}${shortPwd ? " " + stylePwd(shortPwd) : ""}`;
+    lines.push(truncateToWidth(mainLine, width, ""));
+    return lines;
+  }
+
+  // Row 1: emote + model + progress bar
+  const row1 = ` ${styledEmote} ${styleModel(modelStr)} ${styleProgress(progressBar)}`;
+  lines.push(truncateToWidth(row1, width, ""));
+
+  // Row 2: path + optional token stats
+  let row2Text = ` ${stylePwd(pwd)}`;
+  if (config.showTokenStats) {
+    const statsStr = `↑${formatTokens(stats.totalInput)} ↓${formatTokens(stats.totalOutput)} ⇞${stats.cacheHitRate.toFixed(1)}% $${stats.totalCost.toFixed(3)}`;
+    const styleStats = colorStyler(wt["token-info"] ?? "dim", thinkingStyler, theme);
+    const combined = ` ${pwd}  ${statsStr}`;
+    if (visibleWidth(combined) <= width - 2) {
+      row2Text = ` ${stylePwd(pwd)}  ${styleStats(statsStr)}`;
+    }
+  }
+  lines.push(truncateToWidth(row2Text, width, ""));
+
+  // Optional: board lines if config.board enabled and height permits (terminalRows >= 28)
+  if (config.board && terminalRows >= 28) {
+    let boardQuota = terminalRows >= 32 ? 2 : 1;
+    for (const boardLine of capturedLines()) {
+      if (boardQuota <= 0) break;
+      lines.push(truncateToWidth(boardLine, width, "…"));
+      boardQuota--;
+    }
+  }
+
+  return lines;
+}
+
 // --- Widget factory ---
 
 export interface WidgetDeps {
@@ -297,8 +415,30 @@ export function createWidgetFactory(deps: WidgetDeps) {
     return {
       render(width: number): string[] {
         const { animator, config } = deps;
+        const terminalRows = tui?.terminal?.rows ?? process.stdout?.rows ?? 24;
+        const hideBelowRows = config.hideBelowRows ?? 15;
 
-        if (width < config.hideBelow) return [];
+        if (width < config.hideBelow || terminalRows < hideBelowRows) return [];
+
+        const thinkingLevel = deps.pi.getThinkingLevel?.() ?? "high";
+        const thinkingStyler = (theme as any).getThinkingBorderColor?.(thinkingLevel)
+          ?? ((s: string) => theme.fg("border", s));
+        const borderColor = colorStyler(config.theme.border ?? "thinking-level-color", thinkingStyler, theme);
+        const border = borderColor("─".repeat(width));
+
+        if (shouldRenderCompact(width, terminalRows, config)) {
+          return renderCompactFrame(
+            width,
+            terminalRows,
+            animator,
+            config,
+            deps.getCtxRef(),
+            deps.pi,
+            theme,
+            border,
+            thinkingStyler,
+          );
+        }
 
         const frame = animator.getRenderedFrame();
         if (!frame) {
@@ -308,12 +448,7 @@ export function createWidgetFactory(deps: WidgetDeps) {
 
         log(`render: kind=${frame.kind}, set="${deps.getCurrentEmoteSet()}"`);
 
-        const thinkingLevel = deps.pi.getThinkingLevel?.() ?? "high";
-        const thinkingStyler = (theme as any).getThinkingBorderColor?.(thinkingLevel)
-          ?? ((s: string) => theme.fg("border", s));
-        const borderColor = colorStyler(config.theme.border ?? "thinking-level-color", thinkingStyler, theme);
         const separatorColor = colorStyler(config.theme["vertical-separator"] ?? "thinking-level-color", thinkingStyler, theme);
-        const border = borderColor("─".repeat(width));
         const avatarWidth = frame.kind === "text" ? config.asciiCanvas.cols : config.size;
         const infoLines = buildInfoLines(width, avatarWidth, deps.getCtxRef(), deps.pi, theme, config, tui);
 

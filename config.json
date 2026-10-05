@@ -5,6 +5,10 @@
   "asciiCanvas": { "cols": 8, "rows": 4 },
   "readingSpeed": 4,
   "hideBelow": 40,
+  "hideBelowRows": 15,
+  "compactMode": "auto",
+  "compactBelowRows": 35,
+  "compactBelowCols": 80,
   "holdDuration": {
     "hi": 2000,
     "success": 1200,
