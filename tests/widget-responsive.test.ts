@@ -169,3 +169,62 @@ test("createWidgetFactory: hides completely below hideBelow or hideBelowRows", (
   const widget2 = factory(tinyRowsTui, MOCK_THEME);
   assert.deepEqual(widget2.render(80), []);
 });
+
+// Regression: buildInfoLines styled the progress bar with a bare
+// `cacheHitRate` instead of `stats.cacheHitRate`. That name exists only inside
+// extractSessionUsage, so every full-width render threw
+// "ReferenceError: cacheHitRate is not defined" and killed the pi TUI.
+// A wide, tall terminal is required to reach this path: the compact layout
+// short-circuits before buildInfoLines is called.
+test("createWidgetFactory: full-width render styles the progress bar without a ReferenceError", () => {
+  const mockAnimator = {
+    setTui: () => {},
+    getRenderedFrame: () => ({ kind: "text", lines: ["( o.o)", " (   )"] }),
+  } as any;
+
+  // Warm session: cacheRead dominates the prompt, so the cache-hit branch of
+  // resolveProgressColor is the one exercised.
+  const mockCtx = {
+    model: { name: "test-model", reasoning: true },
+    getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
+    sessionManager: {
+      getCwd: () => "/home/riccardo/progetti",
+      getEntries: () => [
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            usage: {
+              input: 100,
+              output: 50,
+              cacheRead: 900,
+              cacheWrite: 0,
+              cost: { total: 0.01 },
+            },
+          },
+        },
+      ],
+    },
+  };
+
+  const factory = createWidgetFactory({
+    animator: mockAnimator,
+    config: BASE_CONFIG,
+    pi: { getThinkingLevel: () => "high" },
+    getCtxRef: () => mockCtx,
+    getCurrentEmoteSet: () => "default",
+  });
+
+  // rows 45 >= compactBelowRows 35 and width 120 >= compactBelowCols 80,
+  // so shouldRenderCompact() is false and buildInfoLines() runs for real.
+  const widget = factory({ terminal: { rows: 45 } }, MOCK_THEME);
+
+  const lines = widget.render(120);
+
+  assert.ok(Array.isArray(lines), "render() must return an array");
+  assert.ok(lines.length > 1, "expected the full panel, not just a border");
+  const panel = lines.join("\n");
+  assert.ok(panel.includes("test-model"), "model line missing");
+  // cacheRead 900 / prompt 1000 => 90% hit rate.
+  assert.ok(panel.includes("90.0%"), "cache hit rate line missing or wrong");
+});

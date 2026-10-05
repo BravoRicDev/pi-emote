@@ -135,7 +135,7 @@ function buildInfoLines(width: number, avatarWidth: number, ctxRef: any, pi: any
     ?? ((s: string) => theme.fg("border", s));
   const wt = config.theme;
   const styleModel = (s: string) => theme.bold(colorStyler(wt["model-name"] ?? "accent", thinkingStyler, theme)(s));
-  const styleProgress = colorStyler(resolveProgressColor(usage?.percent ?? 0, cacheHitRate, wt["progress-bar"] ?? {}), thinkingStyler, theme);
+  const styleProgress = colorStyler(resolveProgressColor(usage?.percent ?? 0, stats.cacheHitRate, wt["progress-bar"] ?? {}), thinkingStyler, theme);
   const styleStats = colorStyler(wt["token-info"] ?? "dim", thinkingStyler, theme);
   const stylePwd = colorStyler(wt["working-directory"] ?? "warning", thinkingStyler, theme);
 
